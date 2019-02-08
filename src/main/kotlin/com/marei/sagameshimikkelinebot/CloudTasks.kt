@@ -4,17 +4,16 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.core.env.Environment
-// import org.springframework.boot.web.client.RestTemplate
-// import org.springframework.boot.web.client.HttpClientErrorException
-// import org.springframework.boot.http.HttpMethod
 import org.springframework.boot.web.client.RestTemplateBuilder
-import org.springframework.web.client.RestOperations
 import org.springframework.web.client.RestClientException
 import org.springframework.web.client.HttpStatusCodeException
-import org.springframework.http.HttpMethod
-import java.net.URLEncoder
-import org.springframework.util.LinkedMultiValueMap
-import org.springframework.util.MultiValueMap
+import com.marei.sagameshimikkelinebot.model.Cuisine
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.google.gson.Gson
+
+//import com.fasterxml.jackson.module.kotlin.*
+
 
 @Component
 class CloudTasks @Autowired constructor(private val environment: Environment,
@@ -37,7 +36,6 @@ class CloudTasks @Autowired constructor(private val environment: Environment,
      */
     @Scheduled(initialDelay = 5000, fixedDelay = 20000)
     fun helloWorld() {
-        var result = "エラー出てない"
         val query = """query publishedCuisines {
   cuisines(where: {status: PUBLISHED, restaurant: {status: PUBLISHED}}) {
     id
@@ -55,39 +53,39 @@ class CloudTasks @Autowired constructor(private val environment: Environment,
   }
 }
 """
-        println(query)
-        // val uri = "https://api-apeast.graphcms.com/v1/cjl24acf702r001aq4d4n7qa0/master?query=query%20publishedCuisines%20%7B%0A%20%20cuisines(where%3A%20%7Bstatus%3A%20PUBLISHED%2C%20restaurant%3A%20%7Bstatus%3A%20PUBLISHED%7D%7D)%20%7B%0A%20%20%20%20id%0A%20%20%20%20name%0A%20%20%20%20photo%20%7B%0A%20%20%20%20%20%20fileName%0A%20%20%20%20%20%20url%0A%20%20%20%20%7D%0A%20%20%20%20restaurant%20%7B%0A%20%20%20%20%20%20name%0A%20%20%20%20%20%20url%0A%20%20%20%20%20%20place%0A%20%20%20%20%20%20googleMapSrc%0A%20%20%20%20%7D%0A%20%20%7D%0A%7D%0A&operationName=publishedCuisines"
-        val uri = "https://api-apeast.graphcms.com/v1/cjl24acf702r001aq4d4n7qa0/master?"
         try {
             if (graphcmsUri is String) {
-                val params: MultiValueMap<String, String> = LinkedMultiValueMap()
-                params.add("operationName", "publishedCuisines")
-                params.add("query", query)
-                params.add("variables", null)
-                // val res = restOperations.getForObject(uri, String::class.java)
-
-                val params2 = mapOf(
+                val params = mapOf(
                         "publishedCuisines" to "operationName",
                         "query" to query,
                         "variables" to null
                 )
-                println(params2)
-                val res = restOperations.postForObject(uri, params2, Map::class.java)
-                // val res = restOperations.postForObject(URLEncoder.encode(uri, "utf-8"), params, MultiValueMap::class.java)
-                // val res = restOperations.exchange(uri, HttpMethod.POST, null, String::class.java)
-                println(res)
+                val res = restOperations.postForObject(graphcmsUri, params, Map::class.java)
+                val cuisineList = mutableListOf<Cuisine>()
+                val mapper = jacksonObjectMapper()
+                if (res is Map) {
+                    val data = res["data"]
+                    if (data is Map<*, *>) {
+                        val cuisines = data["cuisines"]
+                        if (cuisines is List<*>) {
+                            for (cuisine in cuisines) {
+                                val gson = Gson()
+                                val jsonString: String = gson.toJson(cuisine)
+                                val cuisineInstance = mapper.readValue<Cuisine>(jsonString)
+                                cuisineList.add(cuisineInstance)
+                            }
+                        }
+                    }
+                }
+                println("cuisineListの中身： $cuisineList")
+                println("\n")
             }
-            // println(result)
-            // if (graphcmsUri is String) restOperations.getForObject(URLEncoder.encode("https://api-apeast.graphcms.com/", "utf-8"), String::class.java)
-            // if (graphcmsUri is String) restOperations.exchange("https://api-apeast.graphcms.com/v1/cjl24acf702r001aq4d4n7qa0/master", HttpMethod.POST, null, String::class.java)
         } catch (e: HttpStatusCodeException) {
-            println("ステータスコードのエラー出た $e.getStatusCode()")
+            println("Status Code Error: $e.getStatusCode()")
         } catch (e: RestClientException) {
-            println("不明なエラー出た $e")
-        } finally {
-            // println(result)
+            println("Unexpected Error: $e")
         }
-         println("終了")
+        println("\nhelloWorld method end.\n")
     }
 
     /**
@@ -102,7 +100,7 @@ class CloudTasks @Autowired constructor(private val environment: Environment,
     /**
      * 20分毎にアプリケーションのURLへGETアクセスする
      *
-     * 無料版のHerokuだと、Dynoに30分間アクセスが無いとアイドリング状態になってしまうため、
+     * 無料版の Heroku だと、 Dyno に30分間アクセスが無いとアイドリング状態になってしまうため、
      * それを回避するための策略。
      */
     @Scheduled(initialDelay = 1200000, fixedDelay = 1200000)
@@ -111,13 +109,12 @@ class CloudTasks @Autowired constructor(private val environment: Environment,
         if (environment.getProperty("spring.config.name") == DEV_ENV) return
 
         try {
-            // restTemplate.exchange(HEROKU_APP_URL, HttpMethod.GET, null, String::class.java)
             restOperations.getForObject(HEROKU_APP_URL, String::class.java)
         } catch (e: HttpStatusCodeException) {
-            // 現状ページの実装はしていないため必ず404で例外発生
-            println("定期アクセス ステータスコード:${e.getStatusCode()}")
+            println("Status Code Error: $e.getStatusCode()")
         } catch (e: RestClientException) {
-            println("不明なエラー出た ${e}")
+            println("Unexpected Error: $e")
         }
+        println("connectionHerokuApp method end.")
     }
 }
